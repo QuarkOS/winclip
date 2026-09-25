@@ -8,7 +8,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from winclip.shortcut import shortcut_mode
+from winclip.shortcut import WINCLIP_DESKTOP, apply_plasma_shortcuts, shortcut_mode
 
 UNIT = """\
 [Unit]
@@ -25,10 +25,6 @@ Restart=on-failure
 WantedBy=default.target
 """
 
-CUSTOM_PATH = "/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/winclip/"
-MEDIA_KEYS = "org.gnome.settings-daemon.plugins.media-keys"
-
-
 def main() -> None:
     if not _gtk_imports():
         _print_packages()
@@ -43,8 +39,12 @@ def main() -> None:
     desktop = _write_desktop()
     installed.append(str(desktop))
     installed.extend(_enable_unit())
-    installed.extend(_install_extension())
-    installed.extend(_install_keybinding())
+    mode = shortcut_mode(
+        os.environ.get("XDG_CURRENT_DESKTOP", ""),
+        os.environ.get("WAYLAND_DISPLAY"),
+        os.environ.get("DISPLAY"),
+    )
+    installed.extend(_install_shortcut(mode, launcher))
     print("Installed:")
     for line in installed:
         print(line)
@@ -162,9 +162,82 @@ def _enable_unit() -> list[str]:
     return ["winclip.service is enabled"]
 
 
+def _install_shortcut(mode: str, launcher: Path) -> list[str]:
+    if mode == "plasma":
+        return _install_plasma(launcher)
+    if mode == "extension":
+        return _install_extension()
+    if mode == "grab":
+        return [
+            "Shortcut backend: x11 grab",
+            "Super+V is grabbed by the WinClip daemon.",
+        ]
+    return ["Shortcut backend: unbound", "Super+V was not bound. No display is available."]
+
+
+def _install_plasma(launcher: Path) -> list[str]:
+    directory = Path.home() / ".local" / "share" / "kglobalaccel"
+    directory.mkdir(parents=True, exist_ok=True)
+    desktop = directory / WINCLIP_DESKTOP
+    desktop.write_text(
+        "[Desktop Entry]\n"
+        "Type=Application\n"
+        "Name=Clipboard\n"
+        f"Exec={launcher} toggle\n"
+        "X-KDE-GlobalAccel-CommandShortcut=true\n"
+        "X-KDE-Shortcuts=Meta+V\n"
+        "StartupNotify=false\n",
+        encoding="utf-8",
+    )
+    config = Path.home() / ".config" / "kglobalshortcutsrc"
+    config.parent.mkdir(parents=True, exist_ok=True)
+    existing = config.read_text(encoding="utf-8") if config.exists() else ""
+    config.write_text(apply_plasma_shortcuts(existing), encoding="utf-8")
+    _reload_kglobalaccel()
+    return [
+        "Shortcut backend: plasma (kglobalaccel)",
+        str(desktop),
+        str(config),
+        'Plasma action "Show Clipboard Items at Mouse Position" was removed from Super+V.',
+        "Super still opens the application launcher.",
+    ]
+
+
+def _reload_kglobalaccel() -> None:
+    qdbus = shutil.which("qdbus6") or shutil.which("qdbus")
+    if qdbus is None:
+        return
+    subprocess.run(
+        [
+            qdbus,
+            "org.kde.kglobalaccel",
+            "/kglobalaccel",
+            "org.kde.KGlobalAccel.getComponent",
+            WINCLIP_DESKTOP,
+        ],
+        check=False,
+        capture_output=True,
+    )
+    for component in ("plasmashell", "org.kde.klipper.desktop", "klipper"):
+        subprocess.run(
+            [
+                qdbus,
+                "org.kde.kglobalaccel",
+                f"/component/{component}",
+                "org.kde.kglobalaccel.Component.setShortcut",
+                "show-on-mouse-pos",
+                "none",
+                "2",
+            ],
+            check=False,
+            capture_output=True,
+        )
+
+
 def _install_extension() -> list[str]:
-    if shutil.which("gnome-shell") is None:
-        return []
+    if shutil.which("gnome-extensions") is None:
+        print("gnome-extensions is not installed.", file=sys.stderr)
+        raise SystemExit(1)
     source = Path.home() / ".local" / "share" / "winclip" / "app" / "extension"
     dest = (
         Path.home()
@@ -177,58 +250,18 @@ def _install_extension() -> list[str]:
     if dest.exists():
         shutil.rmtree(dest)
     shutil.copytree(source, dest)
-    schemas = dest / "schemas"
-    compiler = shutil.which("glib-compile-schemas")
-    if compiler and schemas.is_dir():
-        subprocess.run([compiler, str(schemas)], check=False)
-    subprocess.run(
-        ["gnome-extensions", "disable", "winclip@winclip.local"],
-        check=False,
-    )
-    subprocess.run(
+    enabled = subprocess.run(
         ["gnome-extensions", "enable", "winclip@winclip.local"],
         check=False,
+        capture_output=True,
+        text=True,
     )
+    if enabled.returncode != 0:
+        detail = (enabled.stderr or enabled.stdout or "gnome-extensions enable failed").strip()
+        print(detail, file=sys.stderr)
+        raise SystemExit(enabled.returncode or 1)
     return [
+        "Shortcut backend: gnome-shell extension",
         str(dest),
         "Super+V runs winclip toggle. Super still opens the overview.",
     ]
-
-
-def _install_keybinding() -> list[str]:
-    import gi
-
-    gi.require_version("Gio", "2.0")
-    from gi.repository import Gio
-
-    source = Gio.SettingsSchemaSource.get_default()
-    schema = source.lookup(MEDIA_KEYS, True) if source is not None else None
-    mode = shortcut_mode(
-        schema is not None,
-        os.environ.get("DISPLAY"),
-        os.environ.get("WAYLAND_DISPLAY"),
-    )
-    if mode == "grab":
-        return ["Super+V is grabbed by the WinClip daemon."]
-    if mode == "extension":
-        return ["Super+V is bound by the WinClip GNOME Shell extension."]
-    if mode == "unbound":
-        return ["Super+V was not bound. No display is available."]
-    settings = Gio.Settings.new(MEDIA_KEYS)
-    current = list(settings.get_strv("custom-keybindings"))
-    if CUSTOM_PATH not in current:
-        current.append(CUSTOM_PATH)
-        settings.set_strv("custom-keybindings", current)
-    child = Gio.Settings.new_with_path(
-        "org.gnome.settings-daemon.plugins.media-keys.custom-keybinding",
-        CUSTOM_PATH,
-    )
-    child.set_string("name", "Clipboard")
-    child.set_string("command", "winclip toggle")
-    child.set_string("binding", "<Super>v")
-    shell = source.lookup("org.gnome.shell.keybindings", True) if source is not None else None
-    if shell is not None and shell.has_key("toggle-message-tray"):
-        tray = Gio.Settings.new("org.gnome.shell.keybindings")
-        bindings = [item for item in tray.get_strv("toggle-message-tray") if item != "<Super>v"]
-        tray.set_strv("toggle-message-tray", bindings)
-    return ["Super+V runs winclip toggle."]

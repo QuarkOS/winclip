@@ -2,25 +2,37 @@
 
 import unittest
 
-from winclip.shortcut import shortcut_mode
+from winclip.shortcut import apply_plasma_shortcuts, shortcut_mode
 
 
 class ShortcutTests(unittest.TestCase):
-    def test_schema_uses_gsettings(self) -> None:
-        self.assertEqual(shortcut_mode(True, ":0", "wayland-0"), "gsettings")
-        self.assertEqual(shortcut_mode(True, ":1", None), "gsettings")
+    def test_plasma_ignores_a_gnome_schema(self) -> None:
+        self.assertEqual(shortcut_mode("KDE", "wayland-0", ":0"), "plasma")
+        self.assertEqual(shortcut_mode("KDE", None, ":1"), "plasma")
 
-    def test_missing_schema_on_wayland_uses_the_extension(self) -> None:
-        self.assertEqual(shortcut_mode(False, ":0", "wayland-0"), "extension")
+    def test_gnome_uses_the_extension(self) -> None:
+        self.assertEqual(shortcut_mode("GNOME", "wayland-0", ":0"), "extension")
+        self.assertEqual(shortcut_mode("ubuntu:GNOME", None, ":1"), "extension")
 
-    def test_gnome_never_grabs_super(self) -> None:
-        self.assertEqual(shortcut_mode(False, ":0", None, gnome=True), "extension")
-        self.assertEqual(shortcut_mode(False, ":1", "", gnome=True), "extension")
+    def test_x11_outside_a_desktop_grabs(self) -> None:
+        self.assertEqual(shortcut_mode("", None, ":1"), "grab")
+        self.assertEqual(shortcut_mode("", "", ":1"), "grab")
 
-    def test_missing_schema_on_x11_grabs(self) -> None:
-        self.assertEqual(shortcut_mode(False, ":1", None), "grab")
-        self.assertEqual(shortcut_mode(False, ":1", ""), "grab")
+    def test_unknown_wayland_stays_unbound(self) -> None:
+        self.assertEqual(shortcut_mode("", "wayland-0", ":0"), "unbound")
+        self.assertEqual(shortcut_mode("", None, None), "unbound")
 
-    def test_missing_schema_without_a_session_stays_unbound(self) -> None:
-        self.assertEqual(shortcut_mode(False, None, None), "unbound")
-        self.assertEqual(shortcut_mode(False, "", ""), "unbound")
+    def test_plasma_clears_klipper_and_keeps_the_launcher(self) -> None:
+        updated = apply_plasma_shortcuts(
+            "[plasmashell]\n"
+            "activate widget 1=Meta\\tAlt+F1,Meta\\tAlt+F1,Activate Application Launcher Widget\n"
+            "show-on-mouse-pos=Meta+V,Meta+V,Show Clipboard Items at Mouse Position\n"
+        )
+        self.assertIn(
+            "show-on-mouse-pos=none,Meta+V,Show Clipboard Items at Mouse Position",
+            updated,
+        )
+        self.assertIn("activate widget 1=Meta\\tAlt+F1,Meta\\tAlt+F1,Activate Application Launcher Widget", updated)
+        self.assertIn("[services][winclip.desktop]", updated)
+        self.assertIn("_launch=Meta+V,Meta+V,Clipboard", updated)
+        self.assertNotIn("\nMeta=", updated)

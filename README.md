@@ -6,18 +6,18 @@ Press Super+V to open the panel. It sits at the bottom center of the screen. Act
 
 ## Fedora
 
-Log out and back in after install so GNOME Shell loads the extension.
+Install picks the shortcut from the running session. On Plasma Wayland, Super+V is a KGlobalAccel command shortcut, the same mechanism Klipper uses for Meta+V. Klipper's "Show Clipboard Items at Mouse Position" is taken off that chord. Super alone stays the application launcher.
 
 ```sh
 sudo dnf install python3 python3-gobject gtk4 gobject-introspection gdk-pixbuf2 xdotool
 python3 -m winclip install
 ```
 
-Super+V runs `winclip toggle`.
+On GNOME Wayland the shell extension is the only Super+V binding, and install fails if `gnome-extensions enable` cannot talk to the shell. Outside both, the daemon grabs Super+V on X11.
 
 ## This machine
 
-GNOME Shell and the media-keys schema are optional. Install still finishes when that schema is missing. On GNOME the extension runs `winclip toggle` for Super+V and leaves the Super overview key alone. Outside GNOME, the daemon grabs Super+V on X11.
+GNOME Shell is optional. Install names the backend it used. On GNOME the extension runs `winclip toggle` for Super+V and leaves the Super overview key alone. On Plasma it writes a kglobalaccel desktop file. Outside both, the daemon grabs Super+V on X11.
 
 ```sh
 sudo apt install python3 python3-gi gir1.2-gtk-4.0 gir1.2-gdkpixbuf-2.0 xdotool

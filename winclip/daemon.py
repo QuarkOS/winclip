@@ -34,9 +34,6 @@ from winclip.seat import GnomeSeat, X11Seat, chord_for, grab_super_v, interpret_
 from winclip.shortcut import shortcut_mode
 from winclip.wire import Focus, Hello, Message, Offer, Toggle, encode, feed
 
-MEDIA_KEYS = "org.gnome.settings-daemon.plugins.media-keys"
-
-
 class ExtensionLink:
     def __init__(self) -> None:
         self._sock: socket.socket | None = None
@@ -186,11 +183,9 @@ class Daemon:
 
     def _maybe_grab(self) -> bool:
         mode = shortcut_mode(
-            _schema_installed(MEDIA_KEYS),
-            os.environ.get("DISPLAY"),
+            os.environ.get("XDG_CURRENT_DESKTOP", ""),
             os.environ.get("WAYLAND_DISPLAY"),
-            gnome=_schema_installed("org.gnome.mutter")
-            or "GNOME" in os.environ.get("XDG_CURRENT_DESKTOP", ""),
+            os.environ.get("DISPLAY"),
         )
         if mode == "grab":
             grab_super_v(self.toggle)
@@ -337,13 +332,6 @@ def _socket_is_live(path) -> bool:
         return True
     finally:
         probe.close()
-
-
-def _schema_installed(name: str) -> bool:
-    source = Gio.SettingsSchemaSource.get_default()
-    if source is None:
-        return False
-    return source.lookup(name, True) is not None
 
 
 def main() -> None:
