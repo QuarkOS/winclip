@@ -1,9 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<schemalist>
-  <schema id="org.gnome.shell.extensions.winclip" path="/org/gnome/shell/extensions/winclip/">
-    <key name="toggle-panel" type="as">
-      <default>["&lt;Super&gt;v"]</default>
-      <summary>Open the clipboard panel</summary>
-    </key>
-  </schema>
-</schemalist>
