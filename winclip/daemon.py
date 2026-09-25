@@ -76,7 +76,9 @@ class Daemon:
         self._seat: X11Seat | GnomeSeat | None = None
         self._link = ExtensionLink()
         self._server: socket.socket | None = None
+        self._server_channel: GLib.IOChannel | None = None
         self._clients: dict[int, socket.socket] = {}
+        self._channels: dict[int, GLib.IOChannel] = {}
         self._buffers: dict[int, bytes] = {}
         self._app: Gtk.Application | None = None
 
@@ -136,7 +138,14 @@ class Daemon:
     def _startup(self, app: Gtk.Application) -> None:
         # GTK 4.14 quits when the last window hides unless the application is held.
         app.hold()
-        GLib.io_add_watch(self._server.fileno(), GLib.IO_IN, self._accept)
+        assert self._server is not None
+        self._server_channel = _io_channel(self._server)
+        GLib.io_add_watch(
+            self._server_channel,
+            GLib.PRIORITY_DEFAULT,
+            GLib.IO_IN,
+            self._accept,
+        )
         self._panel = Panel(
             on_turn_on=lambda: self.handle(Enable()),
             on_activate=lambda clip_id: self.handle(Promote(clip_id)),
@@ -155,7 +164,7 @@ class Daemon:
         self._seat = seat
         self._refresh()
         seat.watch(self.ingest)
-        self._maybe_grab()
+        GLib.idle_add(self._maybe_grab)
 
     def _load_history(self) -> None:
         try:
@@ -174,12 +183,13 @@ class Daemon:
         self._seat.set_boot_id(self._history.boot_id)
         self._panel.set_state(self._history.enabled, rows(self._history))
 
-    def _maybe_grab(self) -> None:
+    def _maybe_grab(self) -> bool:
         if os.environ.get("WAYLAND_DISPLAY") or not os.environ.get("DISPLAY"):
-            return
+            return False
         if _schema_installed(MEDIA_KEYS):
-            return
+            return False
         grab_super_v(self.toggle)
+        return False
 
     def _claim_socket(self) -> bool:
         path = socket_path()
@@ -209,19 +219,28 @@ class Daemon:
         except OSError:
             pass
 
-    def _accept(self, _fd: int, _cond: GLib.IOCondition) -> bool:
+    def _accept(self, _channel: GLib.IOChannel, _cond: GLib.IOCondition) -> bool:
         assert self._server is not None
         try:
             conn, _addr = self._server.accept()
         except OSError:
             return True
         conn.setblocking(False)
-        self._clients[conn.fileno()] = conn
-        self._buffers[conn.fileno()] = b""
-        GLib.io_add_watch(conn.fileno(), GLib.IO_IN | GLib.IO_HUP, self._on_client)
+        channel = _io_channel(conn)
+        fd = conn.fileno()
+        self._clients[fd] = conn
+        self._channels[fd] = channel
+        self._buffers[fd] = b""
+        GLib.io_add_watch(
+            channel,
+            GLib.PRIORITY_DEFAULT,
+            GLib.IO_IN | GLib.IO_HUP,
+            self._on_client,
+        )
         return True
 
-    def _on_client(self, fd: int, cond: GLib.IOCondition) -> bool:
+    def _on_client(self, channel: GLib.IOChannel, cond: GLib.IOCondition) -> bool:
+        fd = channel.unix_get_fd()
         conn = self._clients.get(fd)
         if conn is None:
             return False
@@ -272,6 +291,7 @@ class Daemon:
 
     def _drop(self, fd: int) -> None:
         conn = self._clients.pop(fd, None)
+        self._channels.pop(fd, None)
         self._buffers.pop(fd, None)
         if conn is None:
             return
@@ -280,6 +300,16 @@ class Daemon:
             conn.close()
         except OSError:
             pass
+
+
+def _io_channel(sock: socket.socket) -> GLib.IOChannel:
+    # The channel object must stay referenced. A bare fileno watch is collected
+    # and the source disappears before the first client connects.
+    channel = GLib.IOChannel.unix_new(sock.fileno())
+    channel.set_close_on_unref(False)
+    channel.set_encoding(None)
+    channel.set_flags(channel.get_flags() | GLib.IOFlags.NONBLOCK)
+    return channel
 
 
 def _socket_is_live(path) -> bool:

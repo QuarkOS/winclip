@@ -190,9 +190,10 @@ def grab_super_v(on_press: Callable[[], None]) -> None:
     for mask in (_MOD4, _MOD4 | _LOCK, _MOD4 | _MOD2, _MOD4 | _LOCK | _MOD2):
         _lib().XGrabKey(display, keycode, mask, root, False, _GRAB_ASYNC, _GRAB_ASYNC)
     _lib().XFlush(display)
-    fd = _lib().XConnectionNumber(display)
     state = {"keycode": int(keycode), "on_press": on_press}
-    GLib.io_add_watch(fd, GLib.IO_IN, lambda *_args: _drain_keys(state) or True)
+    # Poll instead of watching the X fd. An IOChannel on that fd makes XPending block
+    # the GTK main loop, so the daemon never accepts clients.
+    GLib.timeout_add(30, lambda: _drain_keys(state) or True)
 
 
 class X11Seat:
@@ -270,10 +271,22 @@ class X11Seat:
         rest = mimes[1:]
 
         def done(cb: Gdk.Clipboard, result: Gio.AsyncResult) -> None:
-            acc.append((mime, _finish_read(cb, result)))
-            self._read(cb, rest, acc, generation)
+            # The stream's bytes arrive on this main loop. A blocking read deadlocks it.
+            _read_stream_async(cb, result, lambda data: self._after_mime(cb, rest, acc, generation, mime, data))
 
         clipboard.read_async([mime], GLib.PRIORITY_DEFAULT, None, done)
+
+    def _after_mime(
+        self,
+        clipboard: Gdk.Clipboard,
+        mimes: list[str],
+        acc: list[tuple[str, bytes]],
+        generation: int,
+        mime: str,
+        data: bytes,
+    ) -> None:
+        acc.append((mime, data))
+        self._read(clipboard, mimes, acc, generation)
 
     def _move(self, x: int, y: int, left: int) -> bool:
         subprocess.run(
@@ -376,29 +389,35 @@ def _strip_tags(html: str) -> str:
     return "".join(out)
 
 
-def _finish_read(clipboard: Gdk.Clipboard, result: Gio.AsyncResult) -> bytes:
+def _read_stream_async(
+    clipboard: Gdk.Clipboard,
+    result: Gio.AsyncResult,
+    callback: Callable[[bytes], None],
+) -> None:
     try:
         stream, _mime = clipboard.read_finish(result)
     except GLib.Error:
-        return b""
+        callback(b"")
+        return
     if stream is None:
-        return b""
+        callback(b"")
+        return
     chunks: list[bytes] = []
-    try:
-        while True:
-            piece = stream.read_bytes(1 << 16, None)
-            if piece.get_size() == 0:
-                break
-            data = piece.get_data()
-            chunks.append(b"" if data is None else bytes(data))
-    except GLib.Error:
-        return b""
-    finally:
+
+    def step(src: Gio.InputStream, res: Gio.AsyncResult) -> None:
         try:
-            stream.close(None)
+            piece = src.read_bytes_finish(res)
         except GLib.Error:
-            pass
-    return b"".join(chunks)
+            callback(b"")
+            return
+        if piece.get_size() == 0:
+            callback(b"".join(chunks))
+            return
+        data = piece.get_data()
+        chunks.append(b"" if data is None else bytes(data))
+        src.read_bytes_async(1 << 16, GLib.PRIORITY_DEFAULT, None, step)
+
+    stream.read_bytes_async(1 << 16, GLib.PRIORITY_DEFAULT, None, step)
 
 
 def _xdotool_key(chord: str) -> str:
@@ -430,9 +449,6 @@ def _stderr():
 def _lib() -> ctypes.CDLL:
     if not hasattr(_lib, "cached"):
         lib = ctypes.CDLL("libX11.so.6")
-        lib.XInitThreads.argtypes = []
-        lib.XInitThreads.restype = ctypes.c_int
-        lib.XInitThreads()
         lib.XOpenDisplay.argtypes = [ctypes.c_char_p]
         lib.XOpenDisplay.restype = ctypes.c_void_p
         lib.XGetInputFocus.argtypes = [
