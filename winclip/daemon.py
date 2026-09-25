@@ -189,6 +189,8 @@ class Daemon:
             _schema_installed(MEDIA_KEYS),
             os.environ.get("DISPLAY"),
             os.environ.get("WAYLAND_DISPLAY"),
+            gnome=_schema_installed("org.gnome.mutter")
+            or "GNOME" in os.environ.get("XDG_CURRENT_DESKTOP", ""),
         )
         if mode == "grab":
             grab_super_v(self.toggle)

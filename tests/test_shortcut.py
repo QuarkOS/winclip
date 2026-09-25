@@ -13,6 +13,10 @@ class ShortcutTests(unittest.TestCase):
     def test_missing_schema_on_wayland_uses_the_extension(self) -> None:
         self.assertEqual(shortcut_mode(False, ":0", "wayland-0"), "extension")
 
+    def test_gnome_never_grabs_super(self) -> None:
+        self.assertEqual(shortcut_mode(False, ":0", None, gnome=True), "extension")
+        self.assertEqual(shortcut_mode(False, ":1", "", gnome=True), "extension")
+
     def test_missing_schema_on_x11_grabs(self) -> None:
         self.assertEqual(shortcut_mode(False, ":1", None), "grab")
         self.assertEqual(shortcut_mode(False, ":1", ""), "grab")

@@ -182,12 +182,16 @@ def _install_extension() -> list[str]:
     if compiler and schemas.is_dir():
         subprocess.run([compiler, str(schemas)], check=False)
     subprocess.run(
+        ["gnome-extensions", "disable", "winclip@winclip.local"],
+        check=False,
+    )
+    subprocess.run(
         ["gnome-extensions", "enable", "winclip@winclip.local"],
         check=False,
     )
     return [
         str(dest),
-        "A Wayland session loads the extension at the next login.",
+        "Super+V runs winclip toggle. Super still opens the overview.",
     ]
 
 

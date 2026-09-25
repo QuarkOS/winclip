@@ -3,11 +3,16 @@
 from __future__ import annotations
 
 
-def shortcut_mode(schema_installed: bool, display: str | None, wayland: str | None) -> str:
-    """gsettings when media-keys exists. Otherwise the design's grab on X11, or the shell on Wayland."""
+def shortcut_mode(
+    schema_installed: bool,
+    display: str | None,
+    wayland: str | None,
+    gnome: bool = False,
+) -> str:
+    """gsettings when media-keys exists. GNOME never grabs Super. X11 grab is only outside GNOME."""
     if schema_installed:
         return "gsettings"
-    if wayland:
+    if gnome or wayland:
         return "extension"
     if display:
         return "grab"

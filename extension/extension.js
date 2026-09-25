@@ -2,7 +2,6 @@ import Clutter from 'gi://Clutter';
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import Meta from 'gi://Meta';
-import Shell from 'gi://Shell';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 
 const HELLO = 1;
@@ -98,9 +97,14 @@ export default class WinclipExtension {
     disable() {
         this._alive = false;
         this._marked = null;
-        if (this._shortcut) {
+        if (this._eventId) {
+            global.stage.disconnect(this._eventId);
+            this._eventId = 0;
+        }
+        try {
             Main.wm.removeKeybinding('toggle-panel');
-            this._shortcut = false;
+        } catch (error) {
+            // The previous build registered this name. A missing one is already gone.
         }
         if (this._ownerId && this._selection) {
             this._selection.disconnect(this._ownerId);
@@ -113,21 +117,26 @@ export default class WinclipExtension {
     }
 
     _bindShortcut() {
-        const source = Gio.SettingsSchemaSource.get_default();
-        const media = source
-            ? source.lookup('org.gnome.settings-daemon.plugins.media-keys', true)
-            : null;
-        if (media)
-            return;
-        this._settings = this.getSettings();
-        Main.wm.addKeybinding(
-            'toggle-panel',
-            this._settings,
-            Meta.KeyBindingFlags.IGNORE_AUTOREPEAT,
-            Shell.ActionMode.ALL,
-            () => this._spawnToggle(),
-        );
-        this._shortcut = true;
+        // Key press only. Super by itself is Super_L or Super_R, so the overview key is untouched.
+        this._eventId = global.stage.connect('captured-event', (_actor, event) => {
+            if (event.type() !== Clutter.EventType.KEY_PRESS)
+                return Clutter.EVENT_PROPAGATE;
+            const symbol = event.get_key_symbol();
+            if (symbol !== Clutter.KEY_v && symbol !== Clutter.KEY_V)
+                return Clutter.EVENT_PROPAGATE;
+            const state = event.get_state();
+            const superDown = state & (Clutter.ModifierType.SUPER_MASK | Clutter.ModifierType.MOD4_MASK);
+            if (!superDown)
+                return Clutter.EVENT_PROPAGATE;
+            const extra = Clutter.ModifierType.CONTROL_MASK
+                | Clutter.ModifierType.SHIFT_MASK
+                | Clutter.ModifierType.ALT_MASK
+                | Clutter.ModifierType.META_MASK;
+            if (state & extra)
+                return Clutter.EVENT_PROPAGATE;
+            this._spawnToggle();
+            return Clutter.EVENT_STOP;
+        });
     }
 
     _spawnToggle() {
