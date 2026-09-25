@@ -1,0 +1,7 @@
+{
+  "uuid": "winclip@winclip.local",
+  "name": "WinClip",
+  "description": "Reads the clipboard for WinClip and pastes into the focused window.",
+  "shell-version": ["45", "46", "47", "48", "49", "50"],
+  "version": 1
+}
