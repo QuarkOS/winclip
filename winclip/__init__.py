@@ -1,0 +1,1 @@
+"""WinClip clipboard history."""
