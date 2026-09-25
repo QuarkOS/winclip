@@ -31,6 +31,7 @@ from winclip.history import (
 from winclip.panel import Panel
 from winclip.paths import history_path, socket_path, state_dir
 from winclip.seat import GnomeSeat, X11Seat, chord_for, grab_super_v, interpret_parts
+from winclip.shortcut import shortcut_mode
 from winclip.wire import Focus, Hello, Message, Offer, Toggle, encode, feed
 
 MEDIA_KEYS = "org.gnome.settings-daemon.plugins.media-keys"
@@ -184,11 +185,13 @@ class Daemon:
         self._panel.set_state(self._history.enabled, rows(self._history))
 
     def _maybe_grab(self) -> bool:
-        if os.environ.get("WAYLAND_DISPLAY") or not os.environ.get("DISPLAY"):
-            return False
-        if _schema_installed(MEDIA_KEYS):
-            return False
-        grab_super_v(self.toggle)
+        mode = shortcut_mode(
+            _schema_installed(MEDIA_KEYS),
+            os.environ.get("DISPLAY"),
+            os.environ.get("WAYLAND_DISPLAY"),
+        )
+        if mode == "grab":
+            grab_super_v(self.toggle)
         return False
 
     def _claim_socket(self) -> bool:

@@ -2,6 +2,8 @@ import Clutter from 'gi://Clutter';
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import Meta from 'gi://Meta';
+import Shell from 'gi://Shell';
+import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 
 const HELLO = 1;
 const OFFER = 3;
@@ -84,6 +86,7 @@ export default class WinclipExtension {
         this._output = null;
         this._buffer = new Uint8Array(0);
         this._selection = global.display.get_selection();
+        this._bindShortcut();
         this._ownerId = this._selection.connect('owner-changed', (_selection, type) => {
             if (type !== Meta.SelectionType.SELECTION_CLIPBOARD)
                 return;
@@ -95,6 +98,10 @@ export default class WinclipExtension {
     disable() {
         this._alive = false;
         this._marked = null;
+        if (this._shortcut) {
+            Main.wm.removeKeybinding('toggle-panel');
+            this._shortcut = false;
+        }
         if (this._ownerId && this._selection) {
             this._selection.disconnect(this._ownerId);
             this._ownerId = 0;
@@ -102,6 +109,33 @@ export default class WinclipExtension {
         if (this._conn) {
             this._conn.close(null);
             this._conn = null;
+        }
+    }
+
+    _bindShortcut() {
+        const source = Gio.SettingsSchemaSource.get_default();
+        const media = source
+            ? source.lookup('org.gnome.settings-daemon.plugins.media-keys', true)
+            : null;
+        if (media)
+            return;
+        this._settings = this.getSettings();
+        Main.wm.addKeybinding(
+            'toggle-panel',
+            this._settings,
+            Meta.KeyBindingFlags.IGNORE_AUTOREPEAT,
+            Shell.ActionMode.ALL,
+            () => this._spawnToggle(),
+        );
+        this._shortcut = true;
+    }
+
+    _spawnToggle() {
+        const binary = `${GLib.get_home_dir()}/.local/bin/winclip`;
+        try {
+            Gio.Subprocess.new([binary, 'toggle'], Gio.SubprocessFlags.NONE);
+        } catch (error) {
+            // The launcher is written by install. A missing file leaves Super+V unbound.
         }
     }
 

@@ -8,6 +8,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from winclip.shortcut import shortcut_mode
+
 UNIT = """\
 [Unit]
 Description=WinClip clipboard history
@@ -31,13 +33,21 @@ def main() -> None:
     if not _gtk_imports():
         _print_packages()
         raise SystemExit(1)
+    installed: list[str] = []
     _copy_app()
-    _write_launcher()
-    _write_unit()
-    _write_desktop()
-    _enable_unit()
-    _install_extension()
-    _install_keybinding()
+    installed.append(str(Path.home() / ".local" / "share" / "winclip" / "app"))
+    launcher = _write_launcher()
+    installed.append(str(launcher))
+    unit = _write_unit()
+    installed.append(str(unit))
+    desktop = _write_desktop()
+    installed.append(str(desktop))
+    installed.extend(_enable_unit())
+    installed.extend(_install_extension())
+    installed.extend(_install_keybinding())
+    print("Installed:")
+    for line in installed:
+        print(line)
 
 
 def _gtk_imports() -> bool:
@@ -82,7 +92,7 @@ def _copy_app() -> None:
         )
 
 
-def _write_launcher() -> None:
+def _write_launcher() -> Path:
     path = Path.home() / ".local" / "bin" / "winclip"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
@@ -92,15 +102,17 @@ def _write_launcher() -> None:
         encoding="utf-8",
     )
     path.chmod(0o755)
+    return path
 
 
-def _write_unit() -> None:
+def _write_unit() -> Path:
     path = Path.home() / ".config" / "systemd" / "user" / "winclip.service"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(UNIT, encoding="utf-8")
+    return path
 
 
-def _write_desktop() -> None:
+def _write_desktop() -> Path:
     directory = Path.home() / ".local" / "share" / "applications"
     directory.mkdir(parents=True, exist_ok=True)
     launcher = Path.home() / ".local" / "bin" / "winclip"
@@ -116,17 +128,17 @@ def _write_desktop() -> None:
         "StartupNotify=false\n",
         encoding="utf-8",
     )
+    return desktop
 
 
-def _enable_unit() -> None:
+def _enable_unit() -> list[str]:
     probe = subprocess.run(
         ["systemctl", "--user", "show-environment"],
         check=False,
         capture_output=True,
     )
     if probe.returncode != 0:
-        print("The unit is installed and the daemon was not started.")
-        return
+        return ["The unit is installed and the daemon was not started."]
     names = [
         name
         for name in ("DISPLAY", "WAYLAND_DISPLAY", "XDG_RUNTIME_DIR")
@@ -142,12 +154,17 @@ def _enable_unit() -> None:
         check=False,
     )
     if enabled.returncode != 0:
-        print("The unit is installed and the daemon was not started.")
+        return ["The unit is installed and the daemon was not started."]
+    subprocess.run(
+        ["systemctl", "--user", "restart", "winclip.service"],
+        check=False,
+    )
+    return ["winclip.service is enabled"]
 
 
-def _install_extension() -> None:
+def _install_extension() -> list[str]:
     if shutil.which("gnome-shell") is None:
-        return
+        return []
     source = Path.home() / ".local" / "share" / "winclip" / "app" / "extension"
     dest = (
         Path.home()
@@ -160,14 +177,21 @@ def _install_extension() -> None:
     if dest.exists():
         shutil.rmtree(dest)
     shutil.copytree(source, dest)
+    schemas = dest / "schemas"
+    compiler = shutil.which("glib-compile-schemas")
+    if compiler and schemas.is_dir():
+        subprocess.run([compiler, str(schemas)], check=False)
     subprocess.run(
         ["gnome-extensions", "enable", "winclip@winclip.local"],
         check=False,
     )
-    print("A Wayland session loads the extension at the next login.")
+    return [
+        str(dest),
+        "A Wayland session loads the extension at the next login.",
+    ]
 
 
-def _install_keybinding() -> None:
+def _install_keybinding() -> list[str]:
     import gi
 
     gi.require_version("Gio", "2.0")
@@ -175,9 +199,17 @@ def _install_keybinding() -> None:
 
     source = Gio.SettingsSchemaSource.get_default()
     schema = source.lookup(MEDIA_KEYS, True) if source is not None else None
-    if schema is None:
-        print("org.gnome.settings-daemon.plugins.media-keys is not installed.")
-        return
+    mode = shortcut_mode(
+        schema is not None,
+        os.environ.get("DISPLAY"),
+        os.environ.get("WAYLAND_DISPLAY"),
+    )
+    if mode == "grab":
+        return ["Super+V is grabbed by the WinClip daemon."]
+    if mode == "extension":
+        return ["Super+V is bound by the WinClip GNOME Shell extension."]
+    if mode == "unbound":
+        return ["Super+V was not bound. No display is available."]
     settings = Gio.Settings.new(MEDIA_KEYS)
     current = list(settings.get_strv("custom-keybindings"))
     if CUSTOM_PATH not in current:
@@ -195,3 +227,4 @@ def _install_keybinding() -> None:
         tray = Gio.Settings.new("org.gnome.shell.keybindings")
         bindings = [item for item in tray.get_strv("toggle-message-tray") if item != "<Super>v"]
         tray.set_strv("toggle-message-tray", bindings)
+    return ["Super+V runs winclip toggle."]

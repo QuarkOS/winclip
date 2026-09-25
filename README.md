@@ -17,7 +17,7 @@ Super+V runs `winclip toggle`.
 
 ## This machine
 
-GNOME Shell and the media-keys schema are optional. When they are missing, install still writes the user service and continues, and the daemon grabs Super+V itself on X11.
+GNOME Shell and the media-keys schema are optional. Install still finishes when that schema is missing. On Wayland the extension binds Super+V. On X11 the daemon grabs it.
 
 ```sh
 sudo apt install python3 python3-gi gir1.2-gtk-4.0 gir1.2-gdkpixbuf-2.0 xdotool
